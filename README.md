@@ -1,2 +1,2 @@
-# dinemites_evaluation
-Evaluation code for the R package dinemites
+# DINEMITES evaluation
+Evaluation code for the R package dinemites.
