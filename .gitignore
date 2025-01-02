@@ -1,0 +1,6 @@
+
+/attic
+.DS_Store
+/evaluation_intermediates
+*.gz
+.Rhistory

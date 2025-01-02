@@ -1,0 +1,8 @@
+simulation_type: one: persistent-lag_30-seasonnsubjects: one: 200nalleles: one: 100nappointments: one: 20total_times: one: 200
+gene_interaction: all: TRUE
+qPCR_only: one: 0
+drop_out: one: 0.2 0 0.1 0.3 0.4 0.5 0.6 0.7 0.8
+loci: one: 5 1 2
+synthetic_type: all: pois-time
+multiple_imputation: all: FALSE
+model: all: bayesian clustering simple
