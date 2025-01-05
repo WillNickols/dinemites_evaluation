@@ -91,7 +91,7 @@ combinations_to_dataframe <- function(combinations) {
     return(df)
 }
 
-parameters <- '~/Documents/GitHub/dinemites_evaluation/scripts/config/other_testing.txt'
+parameters <- 'simulation_scripts/config/other_testing.txt'
 parameter_text <- readLines(parameters)
 parsed_params <- parse_parameters(parameter_text)
 params_for_files <- generate_combinations(parsed_params)
@@ -102,7 +102,7 @@ params_df <- params_df[c(names(parsed_params)[!names(parsed_params) %in% run_onl
 
 rownames(params_df) <- paste0("sim", 1:nrow(params_df))
 
-input_path <- '~/Documents/GitHub/dinemites_evaluation/other/output/'
+input_path <- 'other/output/'
 files_in <- list.files(input_path, full.names = TRUE)
 
 prepare_error <- function(row_num) {
@@ -241,7 +241,7 @@ prepare_error <- function(row_num) {
     return(expanded_df)
 }
 
-if (!file.exists('~/Documents/GitHub/dinemites_evaluation/evaluation_intermediates/other_evaluation.RDS')) {
+if (!file.exists('evaluation_intermediates/other_evaluation.RDS')) {
     # num_cores <- 1
     # cl <- makeCluster(num_cores)
     # registerDoParallel(cl)
@@ -254,9 +254,9 @@ if (!file.exists('~/Documents/GitHub/dinemites_evaluation/evaluation_intermediat
     # stopCluster(cl)
     
     growing_df_save <- dplyr::bind_rows(growing_df)
-    saveRDS(growing_df_save, file = '~/Documents/GitHub/dinemites_evaluation/evaluation_intermediates/other_evaluation.RDS')
+    saveRDS(growing_df_save, file = 'evaluation_intermediates/other_evaluation.RDS')
 } else {
-    growing_df_save <- readRDS('~/Documents/GitHub/dinemites_evaluation/evaluation_intermediates/other_evaluation.RDS')
+    growing_df_save <- readRDS('evaluation_intermediates/other_evaluation.RDS')
 }
 
 growing_df <- growing_df_save

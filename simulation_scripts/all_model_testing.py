@@ -3,7 +3,7 @@ import os
 import itertools
 import copy
 
-workflow = Workflow(version="0.1", description="Evaluate novel infection methodology")
+workflow = Workflow(version="0.1", description="Evaluate dinemites methodology")
 workflow.add_argument("cores", desc="The number of CPU cores allocated to the job", type=int, default=1)
 workflow.add_argument("mem", desc="The memory in megabytes allocated to run the command", type=int, default=10000)
 workflow.add_argument("time", desc="The time in minutes allocated to run the command", type=int, default=120)
@@ -25,11 +25,11 @@ nIterations = 50
 
 # import parameters from
 if evaluation == 'qpcr':
-    parameters_file = 'scripts/config/qpcr_testing.txt'
+    parameters_file = 'simulation_scripts/config/qpcr_testing.txt'
 elif evaluation == 'locus':
-    parameters_file = 'scripts/config/locus_testing.txt'
+    parameters_file = 'simulation_scripts/config/locus_testing.txt'
 elif evaluation == 'other':
-    parameters_file = 'scripts/config/other_testing.txt'
+    parameters_file = 'simulation_scripts/config/other_testing.txt'
 else:
     raise ValueError("evaluation not valid")
 
@@ -139,7 +139,7 @@ for param in combinations:
     for iteration in range(1, nIterations + 1):
         input_file = output + 'input/' + '_'.join(str(param[key]) for key in ordered_keys if key not in run_only_args) + f'_{iteration}.tsv'
         
-        new_command = 'Rscript scripts/all_model_data_generation.R' + \
+        new_command = 'Rscript simulation_scripts/all_model_data_generation.R' + \
             ' ' + ' '.join([f'--{key} {param[key]}' for key in ordered_keys if key not in run_only_args]) + \
             f' --iteration {iteration}' + \
             f' --output {output}'
@@ -155,17 +155,18 @@ for param in combinations:
         
         input_files_generated.add(input_file)
 
-        output_file = output + 'output/' + '_'.join(str(param[key]) for key in ordered_keys) + f'_{iteration}.tsv'
+        output_files = [output + 'output/' + '_'.join(str(param[key]) for key in ordered_keys) + f'_{iteration}_probabilities.tsv',
+            output + 'output/' + '_'.join(str(param[key]) for key in ordered_keys) + f'_{iteration}_infections.tsv']
 
-        new_command = 'Rscript scripts/all_model_testing.R' + \
+        new_command = 'Rscript simulation_scripts/all_model_testing.R' + \
             ' ' + ' '.join([f'--{key} {param[key]}' for key in ordered_keys]) + \
             f' --iteration {iteration}' + \
             f' --output {output}'
 
-        if not os.path.exists(output_file):
+        if any(not os.path.exists(output_file) for output_file in output_files):
             workflow.add_task_gridable(actions=new_command,
             depends = [input_file],
-            targets = [output_file],
+            targets = output_files,
             time=time,
             mem=memory,
             cores=cores,
@@ -173,5 +174,3 @@ for param in combinations:
             )
 
 workflow.go()
-
-

@@ -117,15 +117,10 @@ if (length(infection_persistence_covariates) == 0) {
 
 synth_data <- synth_data %>%
     dplyr::mutate(allele = factor(as.character(allele))) %>%
-    dplyr::arrange(subject, allele, time) %>%
     dplyr::ungroup()
 
 # Run imputation
 if (opt$options$multiple_imputation) {
-    synth_data <- synth_data %>%
-        dplyr::mutate(allele = factor(as.character(allele))) %>%
-        dplyr::arrange(subject, allele, time)
-    
     n_imputations <- 10
     imputed_dataset <- impute_dataset(synth_data, n_imputations)
     
@@ -152,10 +147,7 @@ if (opt$options$multiple_imputation) {
             synth_data_tmp <- add_treatment_column(synth_data_tmp, treatments)
             synth_data_tmp <- add_treatment_infection(synth_data_tmp, treatments)
         }
-        
-        synth_data_tmp <- synth_data_tmp %>%
-            dplyr::arrange(time, subject, allele)
-        
+
         if (opt$options$model == 'bayesian') {
             probability_new <- determine_probabilities_bayesian(synth_data_tmp, 
                                               infection_persistence_covariates,
@@ -167,18 +159,13 @@ if (opt$options$multiple_imputation) {
             probability_new <- determine_probabilities_simple(synth_data_tmp)
         }
         
-        probability_new_mat[,i] <- ifelse(synth_data_tmp$present == 1,
-                                            probability_new$probability_new, NA)
+        probability_new_mat[,i] <- probability_new$probability_new
     }
     
-    synth_data <- synth_data %>%
-        dplyr::arrange(time, subject, allele)
-    
-    synth_data$probability_new <- rowMeans(probability_new_mat, na.rm = T)
-    
-    synth_data <- synth_data %>%
-        arrange(subject, allele, time)
-    synth_data$probability_present <- rowMeans(imputed_dataset)
+    synth_data <- add_probability_present(synth_data, imputed_dataset)
+    synth_data <- add_probability_new(synth_data, probability_new_mat)
+    estimated_new_infections <- estimate_new_infections(
+        synth_data, imputation_mat = imputed_dataset, probability_mat = probability_new_mat)
 } else {
     synth_data <- add_present_infection(synth_data)
     synth_data$present[synth_data$present == 2] <- 0
@@ -198,9 +185,6 @@ if (opt$options$multiple_imputation) {
         synth_data <- add_treatment_infection(synth_data, treatments)
     }
 
-    synth_data <- synth_data %>%
-        dplyr::arrange(time, subject, allele)
-    
     if (opt$options$model == 'bayesian') {
         probability_new <- determine_probabilities_bayesian(synth_data, 
                                           infection_persistence_covariates,
@@ -212,12 +196,9 @@ if (opt$options$multiple_imputation) {
         probability_new <- determine_probabilities_simple(synth_data)
     }
     
-    synth_data$probability_new <- probability_new$probability_new
-    
-    synth_data <- synth_data %>%
-        arrange(subject, allele, time)
-    
     synth_data$probability_present <- synth_data$present
+    synth_data$probability_new <- probability_new$probability_new
+    estimated_new_infections <- estimate_new_infections(synth_data)
 }
 
 output_directory <- file.path(opt$options$output, 'output')
@@ -239,10 +220,13 @@ file_name<-paste(opt$options$simulation_type,
                  sep='_')
 
 write.table(synth_data,
-            file = paste0(output_directory, "/", file_name, ".tsv"),
+            file = paste0(output_directory, "/", file_name, "_probabilities.tsv"),
             sep = '\t',
             row.names = F)
 
-
+write.table(estimated_new_infections,
+            file = paste0(output_directory, "/", file_name, "_infections.tsv"),
+            sep = '\t',
+            row.names = T)
 
 

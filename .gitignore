@@ -4,3 +4,4 @@
 /evaluation_intermediates
 *.gz
 .Rhistory
+README_internal.md

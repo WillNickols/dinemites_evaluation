@@ -65,17 +65,6 @@ qPCR_only_fun <- function(dataset, rate = 0.5) {
     return(dataset)
 }
 
-# drop_out_fun <- function(dataset, rate = 0.3) {
-#     dataset <- dataset %>%
-#         mutate(actually_present = if ("actually_present" %in% names(.)) {
-#             actually_present
-#         } else {
-#             present
-#         }) %>%
-#         mutate(present = ifelse(present %in% c(0,2), present, present * rbinom(nrow(dataset), 1, 1 - rate)))
-#     return(dataset)
-# }
-
 generate_synthetic_data_bin_present <- function(simulation_type,
                                                 nsubjects,
                                                 nalleles,
