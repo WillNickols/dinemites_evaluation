@@ -23,6 +23,7 @@ The real data analysis can be run with:
 ```
 Rscript real_data_analysis_scripts/CIS43LS_analysis.R
 Rscript real_data_analysis_scripts/mali_analysis.R
+Rscript real_data_analysis_scripts/mali_analysis_drop_out.R
 Rscript real_data_analysis_scripts/uganda_analysis.R
 ```
 

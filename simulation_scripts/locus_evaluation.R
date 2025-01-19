@@ -115,43 +115,41 @@ prepare_error <- function(row_num) {
         print(cbind(params_df[row_num,], 'count' = length(files_in[grepl(inputString, files_in)])))
 
         total_input <- data.frame()
-        # total_new_infections <- data.frame()
-        total_new_COI <- data.frame()
+        total_new_infections <- data.frame()
+        molFOI <- data.frame()
         for (file_in in files_in[grepl(inputString, files_in)]) {
-            example_input <- read.csv(file_in, sep = '\t')
-            if (!'actually_present' %in% colnames(example_input)) {
-                example_input$actually_present <- example_input$present
-            }
-
-            if ('probability_present' %in% colnames(example_input)) {
-                if (2 %in% example_input$probability_present) {
-                    example_input$probability_present <- 1 * (example_input$probability_present == 1)
+            if (grepl('_probabilities.tsv', file_in)) {
+                example_input <- read.csv(file_in, sep = '\t')
+                if (!'actually_present' %in% colnames(example_input)) {
+                    example_input$actually_present <- example_input$present
                 }
+                
+                example_input$replicate <- as.numeric(sub(".*_(.*?)_probabilities\\.tsv$", "\\1", file_in))
+                
+                new_infections <- example_input %>%
+                    dplyr::group_by(subject, replicate, time) %>%
+                    dplyr::summarise(new_infections_tmp = 1 * any(infection_event == 1), .groups = 'drop') %>%
+                    dplyr::group_by(subject, replicate) %>%
+                    dplyr::summarise(new_infections_true = sum(new_infections_tmp), .groups = 'drop') %>%
+                    dplyr::mutate(subject = as.character(subject))
+                
+                estimated_new_infections <- data.frame(new_infections = rowMeans(read.csv(gsub("probabilities", "infections", file_in), sep = '\t')),
+                                                       subject = as.character(rownames(read.csv(gsub("probabilities", "infections", file_in), sep = '\t'))))
+                
+                new_infection_comparison <- full_join(new_infections, estimated_new_infections, by = c("subject"))
+                
+                molFOI_stm <- compute_molFOI(example_input, method = 'sum_then_max')
+                colnames(molFOI_stm) <- c("subject", "stm")
+                molFOI_mts <- compute_molFOI(example_input, method = 'max_then_sum')
+                colnames(molFOI_mts) <- c("subject", "mts")
+    
+                this_molFOI <- full_join(molFOI_stm, molFOI_mts, by = c('subject'))
+                this_molFOI$replicate <- as.numeric(sub(".*_(.*?)_probabilities\\.tsv$", "\\1", file_in))
+    
+                total_input <- rbind(total_input, example_input)
+                total_new_infections <- rbind(total_new_infections, new_infection_comparison)
+                molFOI <- rbind(molFOI, this_molFOI)
             }
-
-            example_input$replicate <- as.numeric(gsub(".*_|\\.tsv", "", file_in))
-
-            new_infections <- example_input %>%
-                dplyr::group_by(subject, replicate, time) %>%
-                dplyr::summarise(new_infections_tmp = 1 * any(infection_event == 1), .groups = 'drop') %>%
-                dplyr::group_by(subject, replicate) %>%
-                dplyr::summarise(new_infections_true = sum(new_infections_tmp), .groups = 'drop')
-
-            # estimated_new_infections <- estimate_new_infections(example_input)
-
-            # new_infection_comparison <- full_join(new_infections, estimated_new_infections, by = c("subject"))
-
-            total_new_COI_stm <- compute_total_new_COI(example_input, method = 'sum_then_max')
-            colnames(total_new_COI_stm) <- c("subject", "stm")
-            total_new_COI_mts <- compute_total_new_COI(example_input, method = 'max_then_sum')
-            colnames(total_new_COI_mts) <- c("subject", "mts")
-
-            this_new_COI <- full_join(total_new_COI_stm, total_new_COI_mts, by = c('subject'))
-            this_new_COI$replicate <- as.numeric(gsub(".*_|\\.tsv", "", file_in))
-
-            total_input <- rbind(total_input, example_input)
-            # total_new_infections <- rbind(total_new_infections, new_infection_comparison)
-            total_new_COI <- rbind(total_new_COI, this_new_COI)
         }
 
         binned_props <- total_input %>%
@@ -187,15 +185,15 @@ prepare_error <- function(row_num) {
                    lb = ifelse(is.na(error), NA, binom.test(x = avg_proportion * count, n = count, conf.level = 0.95)$conf.int[1])) %>%
             dplyr::mutate(color = ifelse(count > 10 & (ub - lb) < 0.25, 'black', 'black'))
 
-        true_new_COI_tmp <- total_input %>%
+        true_molFOI_tmp <- total_input %>%
             dplyr::group_by(subject, replicate, locus, time) %>%
             dplyr::summarise(true_novelty_imputed = sum(actually_present == 1 & novelty == 'yes'),
                              infection_event = any(infection_event == 1)) %>%
             dplyr::ungroup()
 
         # Use the fact that infection events and time point immediately afterwards
-        # constitute the same infection to be de-duplicated for new_COI
-        true_new_COI <- true_new_COI_tmp %>%
+        # constitute the same infection to be de-duplicated for molFOI
+        true_molFOI <- true_molFOI_tmp %>%
             group_by(subject, replicate, locus) %>%
             arrange(time) %>%
             mutate(true_novelty_imputed = if_else(infection_event,
@@ -204,14 +202,14 @@ prepare_error <- function(row_num) {
             ungroup() %>%
             filter(infection_event == 1)
 
-        true_new_COI <- true_new_COI %>%
+        true_molFOI <- true_molFOI %>%
             dplyr::group_by(subject, replicate, time) %>%
-            dplyr::summarize(new_COI_tmp = max(true_novelty_imputed)) %>%
+            dplyr::summarize(molFOI_tmp = max(true_novelty_imputed)) %>%
             dplyr::group_by(subject, replicate) %>%
-            dplyr::summarize(new_COI = sum(new_COI_tmp))
+            dplyr::summarize(molFOI = sum(molFOI_tmp))
 
-        total_new_COI <- full_join(true_new_COI, total_new_COI, by = c("subject", "replicate")) %>%
-            mutate(new_COI = ifelse(is.na(new_COI), 0, new_COI))
+        molFOI <- full_join(true_molFOI, molFOI, by = c("subject", "replicate")) %>%
+            mutate(molFOI = ifelse(is.na(molFOI), 0, molFOI))
 
         if ('actually_present' %in% colnames(total_input)) {
             total_input <- total_input %>%
@@ -248,26 +246,26 @@ prepare_error <- function(row_num) {
         total_new_infections_sd <- sd((total_new_infections$new_infections - total_new_infections$new_infections_true))
         total_new_infections_abs_sd <- sd(abs(total_new_infections$new_infections - total_new_infections$new_infections_true))
 
-        total_new_COI_error_stm <- mean(total_new_COI$stm - total_new_COI$new_COI)
-        total_new_COI_error_sd_stm <- sd(total_new_COI$stm - total_new_COI$new_COI)
-        total_new_COI_abs_error_stm <- mean(abs(total_new_COI$stm - total_new_COI$new_COI))
-        total_new_COI_abs_error_sd_stm <- sd(abs(total_new_COI$stm - total_new_COI$new_COI))
-        total_new_COI_error_mts <- mean(total_new_COI$mts - total_new_COI$new_COI)
-        total_new_COI_error_sd_mts <- sd(total_new_COI$mts - total_new_COI$new_COI)
-        total_new_COI_abs_error_mts <- mean(abs(total_new_COI$mts - total_new_COI$new_COI))
-        total_new_COI_abs_error_sd_mts <- sd(abs(total_new_COI$mts - total_new_COI$new_COI))
+        molFOI_error_stm <- mean(molFOI$stm - molFOI$molFOI)
+        molFOI_error_sd_stm <- sd(molFOI$stm - molFOI$molFOI)
+        molFOI_abs_error_stm <- mean(abs(molFOI$stm - molFOI$molFOI))
+        molFOI_abs_error_sd_stm <- sd(abs(molFOI$stm - molFOI$molFOI))
+        molFOI_error_mts <- mean(molFOI$mts - molFOI$molFOI)
+        molFOI_error_sd_mts <- sd(molFOI$mts - molFOI$molFOI)
+        molFOI_abs_error_mts <- mean(abs(molFOI$mts - molFOI$molFOI))
+        molFOI_abs_error_sd_mts <- sd(abs(molFOI$mts - molFOI$molFOI))
 
         expanded_df <- data.frame(params_df[row_num,],
         total_weighted_probability_error,
         total_weighted_probability_abs_error,
-        total_new_COI_error_stm,
-        total_new_COI_error_sd_stm,
-        total_new_COI_abs_error_stm,
-        total_new_COI_abs_error_sd_stm,
-        total_new_COI_error_mts,
-        total_new_COI_error_sd_mts,
-        total_new_COI_abs_error_mts,
-        total_new_COI_abs_error_sd_mts,
+        molFOI_error_stm,
+        molFOI_error_sd_stm,
+        molFOI_abs_error_stm,
+        molFOI_abs_error_sd_stm,
+        molFOI_error_mts,
+        molFOI_error_sd_mts,
+        molFOI_abs_error_mts,
+        molFOI_abs_error_sd_mts,
         total_new_infections_error,
         total_new_infections_abs_error,
         total_new_infections_sd,
@@ -291,6 +289,7 @@ if (!file.exists('evaluation_intermediates/locus_evaluation.RDS')) {
     # stopCluster(cl)
 
     growing_df_save <- dplyr::bind_rows(growing_df)
+    dir.create('evaluation_intermediates', showWarnings = FALSE)
     saveRDS(growing_df_save, file = 'evaluation_intermediates/locus_evaluation.RDS')
 } else {
     growing_df_save <- readRDS('evaluation_intermediates/locus_evaluation.RDS')
@@ -307,14 +306,14 @@ growing_df <- growing_df %>%
                                       synthetic_type == 'pois-time' ~ 'Poisson time to clearance'))
 
 growing_df <- reshape2::melt(growing_df, measure.vars =
-                                 c("total_new_COI_error_stm",
-                                 "total_new_COI_error_sd_stm",
-                                 "total_new_COI_abs_error_stm",
-                                 "total_new_COI_abs_error_sd_stm",
-                                 "total_new_COI_error_mts",
-                                 "total_new_COI_error_sd_mts",
-                                 "total_new_COI_abs_error_mts",
-                                 "total_new_COI_abs_error_sd_mts"))
+                                 c("molFOI_error_stm",
+                                 "molFOI_error_sd_stm",
+                                 "molFOI_abs_error_stm",
+                                 "molFOI_abs_error_sd_stm",
+                                 "molFOI_error_mts",
+                                 "molFOI_error_sd_mts",
+                                 "molFOI_abs_error_mts",
+                                 "molFOI_abs_error_sd_mts"))
 
 growing_df$aggregation_method <- gsub(".*_", "", growing_df$variable)
 growing_df$variable <- gsub("_stm|_mts", "", growing_df$variable)
@@ -329,7 +328,7 @@ growing_df <- growing_df %>%
 current_df <- growing_df %>%
     dplyr::filter(drop_out == '0.2')
 
-plot1 <- ggplot(current_df,
+p1 <- ggplot(current_df,
                 aes(x = loci, y = total_weighted_probability_error, fill = model, shape = multiple_imputation, group = interaction(model, multiple_imputation))) +
         geom_hline(yintercept = 0, color = 'black') +
     geom_line(aes(color = model), linewidth = 1) +
@@ -341,13 +340,12 @@ plot1 <- ggplot(current_df,
         ), guide = "none"
     ) +
     ggnewscale::new_scale_fill() +
-    geom_point(aes(fill = model), size = 3, alpha=1) +
+    geom_point(aes(fill = model), size = 3, alpha=1, shape = 22) +
     labs(
         x = "Loci",
         y = "Predicted probability - True probability",
         fill = "Model",
-        shape = "Multiple Imputation",
-        title = "Probability an infection is new"
+        shape = "Multiple Imputation"
     ) +
     theme_bw() +
     scale_fill_manual(
@@ -357,19 +355,17 @@ plot1 <- ggplot(current_df,
             "Simple" = "darkblue"
         )
     ) +
-    scale_shape_manual(values = c("Yes" = 21, "No" = 22), guide = 'none') +
+    scale_shape_manual(values = 22, guide = 'none') +
     scale_y_continuous(labels = scales::percent, breaks = seq(-0.25, 0.1, 0.05), limits = c(-0.25, 0.1)) +
-    guides(fill = guide_legend(override.aes = list(shape=21))) +
+    guides(fill = 'none') +
     facet_wrap( ~ synthetic_type)
 
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/probability_error_loci.png', plot1, width = 6, height = 4)
-
-plot2 <- ggplot(current_df,
-                aes(x = loci, y = total_new_COI_error, shape = aggregation_method, group = interaction(aggregation_method, model))) +
+p2 <- ggplot(current_df,
+                aes(x = loci, y = molFOI_error, shape = aggregation_method, group = interaction(aggregation_method, model))) +
         geom_hline(yintercept = 0, color = 'black') +
     geom_line(aes(color = model), linewidth = 1, position = position_dodge(width = 0.5)) +
-    geom_errorbar(aes(ymin = total_new_COI_error - total_new_COI_error_sd,
-        ymax = total_new_COI_error + total_new_COI_error_sd,
+    geom_errorbar(aes(ymin = molFOI_error - molFOI_error_sd,
+        ymax = molFOI_error + molFOI_error_sd,
         color = model),
     position = position_dodge(width = 0.5), width = 0.5) +
     scale_color_manual(
@@ -382,7 +378,6 @@ plot2 <- ggplot(current_df,
     ggnewscale::new_scale_fill() +
     geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.5)) +
     labs(
-        title = "Cross-locus molFOI",
         x = "Loci",
         y = "Predicted molFOI - True molFOI",
         fill = "Model",
@@ -399,7 +394,74 @@ plot2 <- ggplot(current_df,
     scale_shape_manual(values = c("Sum then max" = 22, "Max then sum" = 21)) +
     guides(fill = guide_legend(override.aes = list(shape=21))) +
     facet_wrap( ~ synthetic_type)
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/molFOI_obs_error_loci.png', plot2, width = 6, height = 4)
+
+p3 <- ggplot(current_df,
+             aes(x = loci, y = total_weighted_probability_abs_error, fill = model, shape = multiple_imputation, group = interaction(model, multiple_imputation))) +
+    geom_hline(yintercept = 0, color = 'black') +
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1) +
+    labs(
+        x = "Loci",
+        y = "|Predicted probability - True probability|",
+        fill = "Model",
+        shape = "Multiple Imputation"
+    ) +
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +
+    scale_shape_manual(values = 22, guide = 'none') +
+    scale_y_continuous(labels = scales::percent, breaks = seq(0, 0.25, 0.05), limits = c(0, 0.25)) +
+    guides(fill = 'none') +
+    facet_wrap( ~ synthetic_type)
+
+p4 <- ggplot(current_df,
+             aes(x = loci, y = molFOI_abs_error, shape = aggregation_method, group = interaction(aggregation_method, model))) +
+    geom_hline(yintercept = 0, color = 'black') +
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1) +
+    labs(
+        x = "Loci",
+        y = "|Predicted molFOI - True molFOI|",
+        fill = "Model",
+        shape = "Aggregation method"
+    ) +
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +
+    scale_shape_manual(values = c("Sum then max" = 22, "Max then sum" = 21)) +
+    guides(fill = guide_legend(override.aes = list(shape=21))) +
+    facet_wrap( ~ synthetic_type)
+
+
+plot_out <- patchwork::wrap_plots(p1, p3, p2, p4, ncol = 4, guides = 'collect', axis_titles = 'collect')
+dir.create('figures/testing', showWarnings = F, recursive = T)
+ggsave('figures/testing/all_metrics_loci.png', plot_out, width = 12, height = 4)
 
 ############
 # Drop-out #
@@ -409,7 +471,7 @@ current_df <- growing_df %>%
     dplyr::filter(loci == 5) %>%
     dplyr::mutate(drop_out = as.numeric(drop_out))
 
-plot1 <- ggplot(current_df,
+p1 <- ggplot(current_df,
                 aes(x = drop_out, y = total_weighted_probability_error, fill = model, shape = multiple_imputation, group = interaction(model, multiple_imputation))) +
     geom_hline(yintercept = 0, color = 'black') +
     geom_line(aes(color = model), linewidth = 1) +
@@ -426,8 +488,7 @@ plot1 <- ggplot(current_df,
         x = "Drop-out",
         y = "Predicted probability - True probability",
         fill = "Model",
-        shape = "Multiple Imputation",
-        title = "Probability an infection is new"
+        shape = "Multiple Imputation"
     ) +
     theme_bw() +
     scale_fill_manual(
@@ -440,17 +501,15 @@ plot1 <- ggplot(current_df,
     scale_shape_manual(values = c("Yes" = 21, "No" = 22), guide = 'none') +
     scale_y_continuous(labels = scales::percent, breaks = seq(-0.4, 0.1, 0.05), limits = c(-0.4, 0.1)) +
     scale_x_continuous(labels = scales::percent) +
-    guides(fill = guide_legend(override.aes = list(shape=21))) +
+    guides(fill = 'none') +
     facet_wrap( ~ synthetic_type)
 
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/probability_error_drop_out.png', plot1, width = 6, height = 4)
-
-plot2 <- ggplot(current_df,
-                aes(x = drop_out, y = total_new_COI_error, shape = aggregation_method, group = interaction(aggregation_method, model))) +
+p2 <- ggplot(current_df,
+                aes(x = drop_out, y = molFOI_error, shape = aggregation_method, group = interaction(aggregation_method, model))) +
     geom_hline(yintercept = 0, color = 'black') +
     geom_line(aes(color = model), linewidth = 1, position = position_dodge(width = 0.05)) +
-    geom_errorbar(aes(ymin = total_new_COI_error - total_new_COI_error_sd,
-                      ymax = total_new_COI_error + total_new_COI_error_sd,
+    geom_errorbar(aes(ymin = molFOI_error - molFOI_error_sd,
+                      ymax = molFOI_error + molFOI_error_sd,
                       color = model),
                   position = position_dodge(width = 0.05), width = 0.05) +
     scale_color_manual(
@@ -463,7 +522,6 @@ plot2 <- ggplot(current_df,
     ggnewscale::new_scale_fill() +
     geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.05)) +
     labs(
-        title = "Cross-locus molFOI",
         x = "Drop-out",
         y = "Predicted molFOI - True molFOI",
         fill = "Model",
@@ -481,9 +539,75 @@ plot2 <- ggplot(current_df,
     guides(fill = guide_legend(override.aes = list(shape=21))) +
     scale_x_continuous(labels = scales::percent, breaks = c(0, 0.2, 0.4, 0.6, 0.8)) +
     facet_wrap( ~ synthetic_type)
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/molFOI_obs_error_drop_out.png', plot2, width = 6, height = 4)
+
+p3 <- ggplot(current_df,
+             aes(x = drop_out, y = total_weighted_probability_abs_error, fill = model, shape = multiple_imputation, group = interaction(model, multiple_imputation))) +
+    geom_hline(yintercept = 0, color = 'black') +
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1) +
+    labs(
+        x = "Drop-out",
+        y = "|Predicted probability - True probability|",
+        fill = "Model",
+        shape = "Multiple Imputation"
+    ) +
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +
+    scale_shape_manual(values = c("Yes" = 21, "No" = 22), guide = 'none') +
+    scale_y_continuous(labels = scales::percent, breaks = seq(0, 0.4, 0.05), limits = c(0, 0.4)) +
+    scale_x_continuous(labels = scales::percent) +
+    guides(fill = 'none') +
+    facet_wrap( ~ synthetic_type)
+
+p4 <- ggplot(current_df,
+             aes(x = drop_out, y = molFOI_abs_error, shape = aggregation_method, group = interaction(aggregation_method, model))) +
+    geom_hline(yintercept = 0, color = 'black') +
+    geom_line(aes(color = model), linewidth = 1, position = position_dodge(width = 0.05)) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.05)) +
+    labs(
+        x = "Drop-out",
+        y = "|Predicted molFOI - True molFOI|",
+        fill = "Model",
+        shape = "Aggregation method"
+    ) +
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +
+    scale_shape_manual(values = c("Sum then max" = 22, "Max then sum" = 21)) +
+    guides(fill = guide_legend(override.aes = list(shape=21))) +
+    scale_x_continuous(labels = scales::percent, breaks = c(0, 0.2, 0.4, 0.6, 0.8)) +
+    facet_wrap( ~ synthetic_type)
 
 
+plot_out <- patchwork::wrap_plots(p1, p3, p2, p4, ncol = 4, guides = 'collect', axis_titles = 'collect')
+ggsave('figures/testing/all_metrics_drop_out.png', plot_out, width = 12, height = 4)
 
 
 

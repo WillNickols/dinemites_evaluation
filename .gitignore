@@ -5,3 +5,8 @@
 *.gz
 .Rhistory
 README_internal.md
+/figures
+/example_plots
+/locus
+/other
+/qpcr

@@ -1,4 +1,3 @@
-remove(list = ls())
 package_vec = c("optparse", "tidyr", "mvtnorm", "devtools", "dplyr")
 invisible(suppressPackageStartupMessages(lapply(package_vec, require, character.only = TRUE)))
 library(dinemites)
@@ -131,6 +130,7 @@ if (opt$options$multiple_imputation) {
         synth_data_tmp <- synth_data
         synth_data_tmp$present <- imputed_dataset[,i]
         
+        synth_data_tmp <- add_time_gap(synth_data_tmp, default = 0)
         synth_data_tmp <- add_present_infection(synth_data_tmp)
         
         if ('persistent' %in% simulation_type) {
@@ -167,6 +167,7 @@ if (opt$options$multiple_imputation) {
     estimated_new_infections <- estimate_new_infections(
         synth_data, imputation_mat = imputed_dataset, probability_mat = probability_new_mat)
 } else {
+    synth_data <- add_time_gap(synth_data, default = 0)
     synth_data <- add_present_infection(synth_data)
     synth_data$present[synth_data$present == 2] <- 0
     

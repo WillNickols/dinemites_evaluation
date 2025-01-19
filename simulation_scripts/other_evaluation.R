@@ -115,33 +115,31 @@ prepare_error <- function(row_num) {
         print(cbind(params_df[row_num,], 'count' = length(files_in[grepl(inputString, files_in)])))
         
         total_input <- data.frame()
-        # total_new_infections <- data.frame()
+        total_new_infections <- data.frame()
         for (file_in in files_in[grepl(inputString, files_in)]) {
-            example_input <- read.csv(file_in, sep = '\t')
-            if (!'actually_present' %in% colnames(example_input)) {
-                example_input$actually_present <- example_input$present
-            }
-            
-            if ('probability_present' %in% colnames(example_input)) {
-                if (2 %in% example_input$probability_present) {
-                    example_input$probability_present <- 1 * (example_input$probability_present == 1)
+            if (grepl('_probabilities.tsv', file_in)) {
+                example_input <- read.csv(file_in, sep = '\t')
+                if (!'actually_present' %in% colnames(example_input)) {
+                    example_input$actually_present <- example_input$present
                 }
+                
+                example_input$replicate <- as.numeric(sub(".*_(.*?)_probabilities\\.tsv$", "\\1", file_in))
+                
+                new_infections <- example_input %>%
+                    dplyr::group_by(subject, replicate, time) %>%
+                    dplyr::summarise(new_infections_tmp = 1 * any(infection_event == 1), .groups = 'drop') %>%
+                    dplyr::group_by(subject, replicate) %>%
+                    dplyr::summarise(new_infections_true = sum(new_infections_tmp), .groups = 'drop') %>%
+                    dplyr::mutate(subject = as.character(subject))
+                
+                estimated_new_infections <- data.frame(new_infections = rowMeans(read.csv(gsub("probabilities", "infections", file_in), sep = '\t')),
+                                                       subject = as.character(rownames(read.csv(gsub("probabilities", "infections", file_in), sep = '\t'))))
+                
+                new_infection_comparison <- full_join(new_infections, estimated_new_infections, by = c("subject"))
+                
+                total_input <- rbind(total_input, example_input)
+                total_new_infections <- rbind(total_new_infections, new_infection_comparison)
             }
-            
-            example_input$replicate <- as.numeric(gsub(".*_|\\.tsv", "", file_in))
-
-            new_infections <- example_input %>%
-                dplyr::group_by(subject, replicate, time) %>%
-                dplyr::summarise(new_infections_tmp = 1 * any(infection_event == 1), .groups = 'drop') %>%
-                dplyr::group_by(subject, replicate) %>%
-                dplyr::summarise(new_infections_true = sum(new_infections_tmp), .groups = 'drop')
-
-            estimated_new_infections <- estimate_new_infections(example_input)
-
-            # new_infection_comparison <- full_join(new_infections, estimated_new_infections, by = c("subject"))
-            
-            total_input <- rbind(total_input, example_input)
-            # total_new_infections <- rbind(total_new_infections, new_infection_comparison)
         }
         
         binned_props <- total_input %>%
@@ -254,6 +252,7 @@ if (!file.exists('evaluation_intermediates/other_evaluation.RDS')) {
     # stopCluster(cl)
     
     growing_df_save <- dplyr::bind_rows(growing_df)
+    dir.create('evaluation_intermediates', showWarnings = FALSE)
     saveRDS(growing_df_save, file = 'evaluation_intermediates/other_evaluation.RDS')
 } else {
     growing_df_save <- readRDS('evaluation_intermediates/other_evaluation.RDS')
@@ -269,6 +268,10 @@ growing_df <- growing_df %>%
     mutate(synthetic_type = case_when(synthetic_type == 'bin-present' ~ 'Rolling presence probability',
                                       synthetic_type == 'pois-time' ~ 'Poisson time to clearance'))
 
+########################
+# Original scale error #
+########################
+
 #############
 # nsubjects #
 #############
@@ -278,8 +281,8 @@ current_df <- growing_df %>%
                   nalleles == 100)
 
 # First plot: probability error
-plot1 <- ggplot(current_df, 
-                aes(x = as.numeric(nsubjects), y = total_weighted_probability_error, fill = model, shape = multiple_imputation, group = interaction(model, multiple_imputation))) +
+p1 <- ggplot(current_df, 
+                aes(x = as.numeric(nsubjects), y = total_weighted_probability_error, fill = model, group = interaction(model, multiple_imputation))) +
         geom_hline(yintercept = 0, color = 'black') + 
     geom_line(aes(color = model), linewidth = 1) +
     scale_color_manual(
@@ -290,12 +293,11 @@ plot1 <- ggplot(current_df,
         ), guide = "none"
     ) +
     ggnewscale::new_scale_fill() +
-    geom_point(aes(fill = model), size = 3, alpha=1) +
+    geom_point(aes(fill = model), size = 3, alpha=1, shape = 22) +
     labs(
         x = "Subjects",
         y = "Predicted probability - True probability",
-        fill = "Model",
-        title = "Probability an infection is new"
+        fill = "Model"
     ) +
     theme_bw() +
     scale_fill_manual(
@@ -305,16 +307,15 @@ plot1 <- ggplot(current_df,
             "Simple" = "darkblue"
         )
     ) +  
-    scale_shape_manual(values = c("Yes" = 21, "No" = 22), guide = 'none') +
-    scale_y_continuous(labels = scales::percent, breaks = seq(-0.15, 0.25, 0.05), limits = c(-0.15, 0.25)) + 
+    scale_shape_manual(values = 22, guide = 'none') +
+    scale_y_continuous(labels = scales::percent, breaks = seq(-0.15, 0.25, 0.05), limits = c(-0.15, 0.15)) + 
     scale_x_continuous(transform = 'log', breaks = c(50, 100, 200, 500, 1000)) + 
-    guides(fill = guide_legend(override.aes = list(shape=21))) + 
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
     facet_wrap( ~ synthetic_type)
 
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/probability_error_nsubjects.png', plot1, width = 5, height = 4)
 
-plot2 <- ggplot(current_df, 
-                aes(x = as.numeric(nsubjects), y = total_novelty_molFOI_error_observed, shape = multiple_imputation, group = interaction(multiple_imputation, model))) +
+p2 <- ggplot(current_df, 
+                aes(x = as.numeric(nsubjects), y = total_novelty_molFOI_error_observed, group = interaction(multiple_imputation, model))) +
         geom_hline(yintercept = 0, color = 'black') + 
     geom_line(aes(color = model), linewidth = 1, position = position_dodge(width = 0.1)) +
     geom_errorbar(aes(ymin = total_novelty_molFOI_error_observed - total_novelty_molFOI_error_sd_observed, 
@@ -329,13 +330,11 @@ plot2 <- ggplot(current_df,
         ), guide = "none"
     ) +
     ggnewscale::new_scale_fill() +
-    geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.1)) +
+    geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.1), shape = 22) +
     labs(
-        title = "Counting new infections only for sequenced points",
         x = "Subjects",
         y = "Predicted molFOI - True molFOI",
-        fill = "Model",
-        shape = "Multiple Imputation"
+        fill = "Model"
     ) + 
     theme_bw() +
     scale_fill_manual(
@@ -345,53 +344,13 @@ plot2 <- ggplot(current_df,
             "Simple" = "darkblue"
         )
     ) +  
-    scale_shape_manual(values = c("Yes" = 21, "No" = 22), guide = 'none') +
-    guides(fill = guide_legend(override.aes = list(shape=21))) + 
-    scale_x_continuous(transform = 'log', breaks = c(50, 100, 200, 500, 1000)) + 
-    facet_wrap( ~ synthetic_type)
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/molFOI_obs_error_nsubjects.png', plot2, width = 5, height = 4)
-
-plot3 <- ggplot(current_df, 
-                aes(x = as.numeric(nsubjects), y = total_novelty_molFOI_error_imputed, shape = multiple_imputation, group = interaction(multiple_imputation, model))) +
-    geom_hline(yintercept = 0, color = 'black') + 
-    geom_line(aes(color = model), linewidth = 1, position = position_dodge(width = 0.1)) +
-    geom_errorbar(aes(ymin = total_novelty_molFOI_error_imputed - total_novelty_molFOI_error_sd_imputed, 
-                      ymax = total_novelty_molFOI_error_imputed + total_novelty_molFOI_error_sd_imputed,
-                      color = model), 
-                  position = position_dodge(width = 0.1), width = 0.1) +
-    scale_color_manual(
-        values = c(
-            "Bayesian" = "orange",
-            "Clustering" = "maroon",
-            "Simple" = "darkblue"
-        ), guide = "none"
-    ) +
-    ggnewscale::new_scale_fill() +
-    geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.1)) +
-    labs(
-        title = "Counting new infections for sequenced and imputed points",
-        x = "Subjects",
-        y = "Predicted molFOI - True molFOI",
-        fill = "Model",
-        shape = "Multiple Imputation"
-    ) + 
-    theme_bw() +
-    scale_fill_manual(
-        values = c(
-            "Bayesian" = "orange",
-            "Clustering" = "maroon",
-            "Simple" = "darkblue"
-        )
-    ) +  
-    scale_shape_manual(values = c("Yes" = 21, "No" = 22), guide = 'none') +
-    guides(fill = guide_legend(override.aes = list(shape=21))) + 
+    scale_shape_manual(values = 22, guide = 'none') +
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
     scale_x_continuous(transform = 'log', breaks = c(50, 100, 200, 500, 1000)) + 
     facet_wrap( ~ synthetic_type)
 
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/molFOI_inf_error_nsubjects.png', plot3, width = 5, height = 4)
-
-plot4 <- ggplot(current_df, 
-                aes(x = as.numeric(nsubjects), y = total_new_infections_error, fill = model, shape = multiple_imputation, group = interaction(multiple_imputation, model))) +
+p3 <- ggplot(current_df, 
+                aes(x = as.numeric(nsubjects), y = total_new_infections_error, fill = model, group = interaction(multiple_imputation, model))) +
         geom_hline(yintercept = 0, color = 'black') + 
     geom_line(aes(color = model), linewidth = 1, position = position_dodge(width = 0.1)) +
     geom_errorbar(aes(ymin = total_new_infections_error - total_new_infections_sd, 
@@ -406,13 +365,11 @@ plot4 <- ggplot(current_df,
         ), guide = "none"
     ) +
     ggnewscale::new_scale_fill() +
-    geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.1)) +
+    geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.1), shape = 22) +
     labs(
-        title = "Counting new infections for sequenced and imputed points",
         x = "Subjects",
         y = "Predicted infections - True infections",
-        fill = "Model",
-        shape = "Multiple Imputation"
+        fill = "Model"
     ) + 
     theme_bw() +
     scale_fill_manual(
@@ -422,12 +379,10 @@ plot4 <- ggplot(current_df,
             "Simple" = "darkblue"
         )
     ) +  
-    scale_shape_manual(values = c("Yes" = 21, "No" = 22), guide = 'none') +
-    guides(fill = guide_legend(override.aes = list(shape=21))) + 
+    scale_shape_manual(values = 22, guide = 'none') +
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
     scale_x_continuous(transform = 'log', breaks = c(50, 100, 200, 500, 1000)) + 
     facet_wrap( ~ synthetic_type)
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/infections_error_nsubjects.png', plot4, width = 5, height = 4)
-
 
 ############
 # nalleles #
@@ -438,8 +393,8 @@ current_df <- growing_df %>%
                   nsubjects == 200)
 
 # First plot: probability error
-plot1 <- ggplot(current_df, 
-                aes(x = as.numeric(nalleles), y = total_weighted_probability_error, fill = model, shape = multiple_imputation, group = interaction(model, multiple_imputation))) +
+p4 <- ggplot(current_df, 
+                aes(x = as.numeric(nalleles), y = total_weighted_probability_error, fill = model, group = interaction(model, multiple_imputation))) +
     geom_hline(yintercept = 0, color = 'black') + 
     geom_line(aes(color = model), linewidth = 1) +
     scale_color_manual(
@@ -450,12 +405,11 @@ plot1 <- ggplot(current_df,
         ), guide = "none"
     ) +
     ggnewscale::new_scale_fill() +
-    geom_point(aes(fill = model), size = 3, alpha=1) +
+    geom_point(aes(fill = model), size = 3, alpha=1, shape = 22) +
     labs(
         x = "Alleles",
         y = "Predicted probability - True probability",
-        fill = "Model",
-        title = "Probability an infection is new"
+        fill = "Model"
     ) +
     theme_bw() +
     scale_fill_manual(
@@ -465,16 +419,14 @@ plot1 <- ggplot(current_df,
             "Simple" = "darkblue"
         )
     ) +  
-    scale_shape_manual(values = c("Yes" = 21, "No" = 22), guide = 'none') +
-    scale_y_continuous(labels = scales::percent, breaks = seq(-0.15, 0.25, 0.05), limits = c(-0.15, 0.25)) + 
+    scale_shape_manual(values = 22, guide = 'none') +
+    scale_y_continuous(labels = scales::percent, breaks = seq(-0.15, 0.25, 0.05), limits = c(-0.15, 0.15)) + 
     scale_x_continuous(transform = 'log', breaks = c(20, 50, 100, 200)) + 
-    guides(fill = guide_legend(override.aes = list(shape=21))) + 
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
     facet_wrap( ~ synthetic_type)
 
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/probability_error_nalleles.png', plot1, width = 5, height = 4)
-
-plot2 <- ggplot(current_df, 
-                aes(x = as.numeric(nalleles), y = total_novelty_molFOI_error_observed, shape = multiple_imputation, group = interaction(multiple_imputation, model))) +
+p5 <- ggplot(current_df, 
+                aes(x = as.numeric(nalleles), y = total_novelty_molFOI_error_observed, group = interaction(multiple_imputation, model))) +
     geom_hline(yintercept = 0, color = 'black') + 
     geom_line(aes(color = model), linewidth = 1, position = position_dodge(width = 0.1)) +
     geom_errorbar(aes(ymin = total_novelty_molFOI_error_observed - total_novelty_molFOI_error_sd_observed, 
@@ -489,13 +441,11 @@ plot2 <- ggplot(current_df,
         ), guide = "none"
     ) +
     ggnewscale::new_scale_fill() +
-    geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.1)) +
+    geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.1), shape = 22) +
     labs(
-        title = "Counting new infections only for sequenced points",
         x = "Alleles",
         y = "Predicted molFOI - True molFOI",
-        fill = "Model",
-        shape = "Multiple Imputation"
+        fill = "Model"
     ) + 
     theme_bw() +
     scale_fill_manual(
@@ -505,53 +455,13 @@ plot2 <- ggplot(current_df,
             "Simple" = "darkblue"
         )
     ) +  
-    scale_shape_manual(values = c("Yes" = 21, "No" = 22), guide = 'none') +
-    guides(fill = guide_legend(override.aes = list(shape=21))) + 
-    scale_x_continuous(transform = 'log', breaks = c(20, 50, 100, 200)) + 
-    facet_wrap( ~ synthetic_type)
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/molFOI_obs_error_nalleles.png', plot2, width = 5, height = 4)
-
-plot3 <- ggplot(current_df, 
-                aes(x = as.numeric(nalleles), y = total_novelty_molFOI_error_imputed, shape = multiple_imputation, group = interaction(multiple_imputation, model))) +
-    geom_hline(yintercept = 0, color = 'black') + 
-    geom_line(aes(color = model), linewidth = 1, position = position_dodge(width = 0.1)) +
-    geom_errorbar(aes(ymin = total_novelty_molFOI_error_imputed - total_novelty_molFOI_error_sd_imputed, 
-                      ymax = total_novelty_molFOI_error_imputed + total_novelty_molFOI_error_sd_imputed,
-                      color = model), 
-                  position = position_dodge(width = 0.1), width = 0.1) +
-    scale_color_manual(
-        values = c(
-            "Bayesian" = "orange",
-            "Clustering" = "maroon",
-            "Simple" = "darkblue"
-        ), guide = "none"
-    ) +
-    ggnewscale::new_scale_fill() +
-    geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.1)) +
-    labs(
-        title = "Counting new infections for sequenced and imputed points",
-        x = "Alleles",
-        y = "Predicted molFOI - True molFOI",
-        fill = "Model",
-        shape = "Multiple Imputation"
-    ) + 
-    theme_bw() +
-    scale_fill_manual(
-        values = c(
-            "Bayesian" = "orange",
-            "Clustering" = "maroon",
-            "Simple" = "darkblue"
-        )
-    ) +  
-    scale_shape_manual(values = c("Yes" = 21, "No" = 22), guide = 'none') +
-    guides(fill = guide_legend(override.aes = list(shape=21))) + 
+    scale_shape_manual(values = 22, guide = 'none') +
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
     scale_x_continuous(transform = 'log', breaks = c(20, 50, 100, 200)) + 
     facet_wrap( ~ synthetic_type)
 
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/molFOI_inf_error_nalleles.png', plot3, width = 5, height = 4)
-
-plot4 <- ggplot(current_df, 
-                aes(x = as.numeric(nalleles), y = total_new_infections_error, fill = model, shape = multiple_imputation, group = interaction(multiple_imputation, model))) +
+p6 <- ggplot(current_df, 
+                aes(x = as.numeric(nalleles), y = total_new_infections_error, fill = model, group = interaction(multiple_imputation, model))) +
     geom_hline(yintercept = 0, color = 'black') + 
     geom_line(aes(color = model), linewidth = 1, position = position_dodge(width = 0.1)) +
     geom_errorbar(aes(ymin = total_new_infections_error - total_new_infections_sd, 
@@ -566,13 +476,11 @@ plot4 <- ggplot(current_df,
         ), guide = "none"
     ) +
     ggnewscale::new_scale_fill() +
-    geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.1)) +
+    geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.1), shape = 22) +
     labs(
-        title = "Counting new infections for sequenced and imputed points",
         x = "Alleles",
         y = "Predicted infections - True infections",
-        fill = "Model",
-        shape = "Multiple Imputation"
+        fill = "Model"
     ) + 
     theme_bw() +
     scale_fill_manual(
@@ -582,12 +490,10 @@ plot4 <- ggplot(current_df,
             "Simple" = "darkblue"
         )
     ) +  
-    scale_shape_manual(values = c("Yes" = 21, "No" = 22), guide = 'none') +
-    guides(fill = guide_legend(override.aes = list(shape=21))) + 
+    scale_shape_manual(values = 22, guide = 'none') +
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
     scale_x_continuous(transform = 'log', breaks = c(20, 50, 100, 200)) + 
     facet_wrap( ~ synthetic_type)
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/infections_error_nalleles.png', plot4, width = 5, height = 4)
-
 
 ##########
 # models #
@@ -602,8 +508,8 @@ current_df <- growing_df %>%
                                               simulation_type == 'persistent-lag_30-season-treatment' ~ 'Persistent, acute,\nseason, and treatment'))
 
 # First plot: probability error
-plot1 <- ggplot(current_df, 
-                aes(x = simulation_type, y = total_weighted_probability_error, fill = model, shape = multiple_imputation, group = interaction(model, multiple_imputation))) +
+p7 <- ggplot(current_df, 
+                aes(x = simulation_type, y = total_weighted_probability_error, fill = model, group = interaction(model, multiple_imputation))) +
     geom_hline(yintercept = 0, color = 'black') + 
     geom_line(aes(color = model), linewidth = 1) +
     scale_color_manual(
@@ -614,12 +520,11 @@ plot1 <- ggplot(current_df,
         ), guide = "none"
     ) +
     ggnewscale::new_scale_fill() +
-    geom_point(aes(fill = model), size = 3, alpha=1) +
+    geom_point(aes(fill = model), size = 3, alpha=1, shape = 22) +
     labs(
         x = "Simulation type",
         y = "Predicted probability - True probability",
-        fill = "Model",
-        title = "Probability an infection is new"
+        fill = "Model"
     ) +
     theme_bw() +
     scale_fill_manual(
@@ -629,16 +534,14 @@ plot1 <- ggplot(current_df,
             "Simple" = "darkblue"
         )
     ) +  
-    scale_shape_manual(values = c("Yes" = 21, "No" = 22), guide = 'none') +
-    scale_y_continuous(labels = scales::percent, breaks = seq(-0.15, 0.25, 0.05), limits = c(-0.15, 0.25)) + 
-    guides(fill = guide_legend(override.aes = list(shape=21))) + 
+    scale_shape_manual(values = 22, guide = 'none') +
+    scale_y_continuous(labels = scales::percent, breaks = seq(-0.15, 0.25, 0.05), limits = c(-0.15, 0.15)) + 
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
     theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
     facet_wrap( ~ synthetic_type)
 
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/probability_error_simulation_type.png', plot1, width = 5, height = 4)
-
-plot2 <- ggplot(current_df, 
-                aes(x = simulation_type, y = total_novelty_molFOI_error_observed, shape = multiple_imputation, group = interaction(multiple_imputation, model))) +
+p8 <- ggplot(current_df, 
+                aes(x = simulation_type, y = total_novelty_molFOI_error_observed, group = interaction(multiple_imputation, model))) +
     geom_hline(yintercept = 0, color = 'black') + 
     geom_line(aes(color = model), linewidth = 1, position = position_dodge(width = 0.1)) +
     geom_errorbar(aes(ymin = total_novelty_molFOI_error_observed - total_novelty_molFOI_error_sd_observed, 
@@ -653,13 +556,11 @@ plot2 <- ggplot(current_df,
         ), guide = "none"
     ) +
     ggnewscale::new_scale_fill() +
-    geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.1)) +
+    geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.1), shape = 22) +
     labs(
-        title = "Counting new infections only for sequenced points",
         x = "Simulation type",
         y = "Predicted molFOI - True molFOI",
-        fill = "Model",
-        shape = "Multiple Imputation"
+        fill = "Model"
     ) + 
     theme_bw() +
     scale_fill_manual(
@@ -669,53 +570,13 @@ plot2 <- ggplot(current_df,
             "Simple" = "darkblue"
         )
     ) +  
-    scale_shape_manual(values = c("Yes" = 21, "No" = 22), guide = 'none') +
-    guides(fill = guide_legend(override.aes = list(shape=21))) + 
+    scale_shape_manual(values = 22, guide = 'none') +
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
     theme(axis.text.x = element_text(angle = 45, hjust = 1)) +    
     facet_wrap( ~ synthetic_type)
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/molFOI_obs_error_simulation_type.png', plot2, width = 5, height = 4)
 
-plot3 <- ggplot(current_df, 
-                aes(x = simulation_type, y = total_novelty_molFOI_error_imputed, shape = multiple_imputation, group = interaction(multiple_imputation, model))) +
-    geom_hline(yintercept = 0, color = 'black') + 
-    geom_line(aes(color = model), linewidth = 1, position = position_dodge(width = 0.1)) +
-    geom_errorbar(aes(ymin = total_novelty_molFOI_error_imputed - total_novelty_molFOI_error_sd_imputed, 
-                      ymax = total_novelty_molFOI_error_imputed + total_novelty_molFOI_error_sd_imputed,
-                      color = model), 
-                  position = position_dodge(width = 0.1), width = 0.1) +
-    scale_color_manual(
-        values = c(
-            "Bayesian" = "orange",
-            "Clustering" = "maroon",
-            "Simple" = "darkblue"
-        ), guide = "none"
-    ) +
-    ggnewscale::new_scale_fill() +
-    geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.1)) +
-    labs(
-        title = "Counting new infections for sequenced and imputed points",
-        x = "Simulation type",
-        y = "Predicted molFOI - True molFOI",
-        fill = "Model",
-        shape = "Multiple Imputation"
-    ) + 
-    theme_bw() +
-    scale_fill_manual(
-        values = c(
-            "Bayesian" = "orange",
-            "Clustering" = "maroon",
-            "Simple" = "darkblue"
-        )
-    ) +  
-    scale_shape_manual(values = c("Yes" = 21, "No" = 22), guide = 'none') +
-    guides(fill = guide_legend(override.aes = list(shape=21))) + 
-    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-    facet_wrap( ~ synthetic_type)
-
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/molFOI_inf_error_simulation_type.png', plot3, width = 5, height = 4)
-
-plot4 <- ggplot(current_df, 
-                aes(x = simulation_type, y = total_new_infections_error, fill = model, shape = multiple_imputation, group = interaction(multiple_imputation, model))) +
+p9 <- ggplot(current_df, 
+                aes(x = simulation_type, y = total_new_infections_error, fill = model, group = interaction(multiple_imputation, model))) +
     geom_hline(yintercept = 0, color = 'black') + 
     geom_line(aes(color = model), linewidth = 1, position = position_dodge(width = 0.1)) +
     geom_errorbar(aes(ymin = total_new_infections_error - total_new_infections_sd, 
@@ -730,13 +591,11 @@ plot4 <- ggplot(current_df,
         ), guide = "none"
     ) +
     ggnewscale::new_scale_fill() +
-    geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.1)) +
+    geom_point(aes(fill = model), size = 3, alpha=1, position = position_dodge(width = 0.1), shape = 22) +
     labs(
-        title = "Counting new infections for sequenced and imputed points",
         x = "Simulation type",
         y = "Predicted infections - True infections",
-        fill = "Model",
-        shape = "Multiple Imputation"
+        fill = "Model"
     ) + 
     theme_bw() +
     scale_fill_manual(
@@ -746,15 +605,403 @@ plot4 <- ggplot(current_df,
             "Simple" = "darkblue"
         )
     ) +  
-    scale_shape_manual(values = c("Yes" = 21, "No" = 22), guide = 'none') +
-    guides(fill = guide_legend(override.aes = list(shape=21))) + 
+    scale_shape_manual(values = 22, guide = 'none') +
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
     theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
     facet_wrap( ~ synthetic_type)
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/infections_error_simulation_type.png', plot4, width = 5, height = 4)
+
+plot_out <- patchwork::wrap_plots(p1, p2, p3, p4, p5, p6, p7, p8, p9, ncol = 3, guides = 'collect', axis_titles = 'collect')
+dir.create('figures/testing', showWarnings = F, recursive = T)
+ggsave('figures/testing/all_metrics_other.png', plot_out, width = 10, height = 8)
 
 
 
 
 
+
+
+
+
+########################
+# Absolute scale error #
+########################
+
+#############
+# nsubjects #
+#############
+
+current_df <- growing_df %>%
+    dplyr::filter(simulation_type == 'persistent-lag_30-season',
+                  nalleles == 100)
+
+# First plot: probability error
+p1 <- ggplot(current_df, 
+             aes(x = as.numeric(nsubjects), y = total_weighted_probability_abs_error, fill = model, group = interaction(model, multiple_imputation))) +
+    geom_hline(yintercept = 0, color = 'black') + 
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1, shape = 22) +
+    labs(
+        x = "Subjects",
+        y = "|Predicted probability - True probability|",
+        fill = "Model"
+    ) +
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +  
+    scale_shape_manual(values = 22, guide = 'none') +
+    scale_y_continuous(labels = scales::percent, breaks = seq(-0.15, 0.25, 0.05), limits = c(0, 0.15)) + 
+    scale_x_continuous(transform = 'log', breaks = c(50, 100, 200, 500, 1000)) + 
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
+    facet_wrap( ~ synthetic_type)
+
+
+p2 <- ggplot(current_df, 
+             aes(x = as.numeric(nsubjects), y = total_novelty_molFOI_abs_error_observed, group = interaction(multiple_imputation, model))) +
+    geom_hline(yintercept = 0, color = 'black') + 
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1, shape = 22) +
+    labs(
+        x = "Subjects",
+        y = "|Predicted molFOI - True molFOI|",
+        fill = "Model"
+    ) + 
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +  
+    scale_shape_manual(values = 22, guide = 'none') +
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
+    scale_x_continuous(transform = 'log', breaks = c(50, 100, 200, 500, 1000)) + 
+    facet_wrap( ~ synthetic_type)
+
+p3 <- ggplot(current_df, 
+             aes(x = as.numeric(nsubjects), y = total_new_infections_abs_error, fill = model, group = interaction(multiple_imputation, model))) +
+    geom_hline(yintercept = 0, color = 'black') + 
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1, shape = 22) +
+    labs(
+        x = "Subjects",
+        y = "|Predicted infections - True infections|",
+        fill = "Model"
+    ) + 
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +  
+    scale_shape_manual(values = 22, guide = 'none') +
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
+    scale_x_continuous(transform = 'log', breaks = c(50, 100, 200, 500, 1000)) + 
+    facet_wrap( ~ synthetic_type)
+
+############
+# nalleles #
+############
+
+current_df <- growing_df %>%
+    dplyr::filter(simulation_type == 'persistent-lag_30-season',
+                  nsubjects == 200)
+
+# First plot: probability error
+p4 <- ggplot(current_df, 
+             aes(x = as.numeric(nalleles), y = total_weighted_probability_abs_error, fill = model, group = interaction(model, multiple_imputation))) +
+    geom_hline(yintercept = 0, color = 'black') + 
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1, shape = 22) +
+    labs(
+        x = "Alleles",
+        y = "|Predicted probability - True probability|",
+        fill = "Model"
+    ) +
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +  
+    scale_shape_manual(values = 22, guide = 'none') +
+    scale_y_continuous(labels = scales::percent, breaks = seq(-0.15, 0.25, 0.05), limits = c(0, 0.15)) + 
+    scale_x_continuous(transform = 'log', breaks = c(20, 50, 100, 200)) + 
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
+    facet_wrap( ~ synthetic_type)
+
+p5 <- ggplot(current_df, 
+             aes(x = as.numeric(nalleles), y = total_novelty_molFOI_abs_error_observed, group = interaction(multiple_imputation, model))) +
+    geom_hline(yintercept = 0, color = 'black') + 
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1, shape = 22) +
+    labs(
+        x = "Alleles",
+        y = "|Predicted molFOI - True molFOI|",
+        fill = "Model"
+    ) + 
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +  
+    scale_shape_manual(values = 22, guide = 'none') +
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
+    scale_x_continuous(transform = 'log', breaks = c(20, 50, 100, 200)) + 
+    facet_wrap( ~ synthetic_type)
+
+p6 <- ggplot(current_df, 
+             aes(x = as.numeric(nalleles), y = total_new_infections_abs_error, fill = model, group = interaction(multiple_imputation, model))) +
+    geom_hline(yintercept = 0, color = 'black') + 
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1, shape = 22) +
+    labs(
+        x = "Alleles",
+        y = "|Predicted infections - True infections|",
+        fill = "Model"
+    ) + 
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +  
+    scale_shape_manual(values = 22, guide = 'none') +
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
+    scale_x_continuous(transform = 'log', breaks = c(20, 50, 100, 200)) + 
+    facet_wrap( ~ synthetic_type)
+
+##########
+# models #
+##########
+
+current_df <- growing_df %>%
+    dplyr::filter(nalleles == 100,
+                  nsubjects == 200) %>%
+    dplyr::mutate(simulation_type = case_when(simulation_type == 'persistent-lag_30' ~ 'Persistent and acute',
+                                              simulation_type == 'persistent-lag_30-season' ~ 'Persistent, acute,\nand season',
+                                              simulation_type == 'persistent-lag_30-season-prevention_covariate' ~ 'Persistent, acute, season,\nand protection covariate',
+                                              simulation_type == 'persistent-lag_30-season-treatment' ~ 'Persistent, acute,\nseason, and treatment'))
+
+# First plot: probability error
+p7 <- ggplot(current_df, 
+             aes(x = simulation_type, y = total_weighted_probability_abs_error, fill = model, group = interaction(model, multiple_imputation))) +
+    geom_hline(yintercept = 0, color = 'black') + 
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1, shape = 22) +
+    labs(
+        x = "Simulation type",
+        y = "|Predicted probability - True probability|",
+        fill = "Model"
+    ) +
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +  
+    scale_shape_manual(values = 22, guide = 'none') +
+    scale_y_continuous(labels = scales::percent, breaks = seq(-0.15, 0.25, 0.05), limits = c(0, 0.15)) + 
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    facet_wrap( ~ synthetic_type)
+
+p8 <- ggplot(current_df, 
+             aes(x = simulation_type, y = total_novelty_molFOI_abs_error_observed, group = interaction(multiple_imputation, model))) +
+    geom_hline(yintercept = 0, color = 'black') + 
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1, shape = 22) +
+    labs(
+        x = "Simulation type",
+        y = "|Predicted molFOI - True molFOI|",
+        fill = "Model"
+    ) + 
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +  
+    scale_shape_manual(values = 22, guide = 'none') +
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +    
+    facet_wrap( ~ synthetic_type)
+
+p9 <- ggplot(current_df, 
+             aes(x = simulation_type, y = total_new_infections_abs_error, fill = model, group = interaction(multiple_imputation, model))) +
+    geom_hline(yintercept = 0, color = 'black') + 
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1, shape = 22) +
+    labs(
+        x = "Simulation type",
+        y = "|Predicted infections - True infections|",
+        fill = "Model"
+    ) + 
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +  
+    scale_shape_manual(values = 22, guide = 'none') +
+    guides(fill = guide_legend(override.aes = list(shape=22))) + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    facet_wrap( ~ synthetic_type)
+
+plot_out <- patchwork::wrap_plots(p1, p2, p3, p4, p5, p6, p7, p8, p9, ncol = 3, guides = 'collect', axis_titles = 'collect')
+dir.create('figures/testing', showWarnings = F, recursive = T)
+ggsave('figures/testing/all_metrics_abs_other.png', plot_out, width = 10, height = 8)
+
+##################
+# In-text values #
+##################
+
+row_num <- 11
+inputString <- paste0(unlist(c(params_df[row_num,])), collapse = '_')
+total_input <- data.frame()
+total_new_infections <- data.frame()
+for (file_in in files_in[grepl(inputString, files_in)]) {
+    if (grepl('_probabilities.tsv', file_in)) {
+        example_input <- read.csv(file_in, sep = '\t')
+        if (!'actually_present' %in% colnames(example_input)) {
+            example_input$actually_present <- example_input$present
+        }
+        
+        example_input$replicate <- as.numeric(sub(".*_(.*?)_probabilities\\.tsv$", "\\1", file_in))
+        
+        new_infections <- example_input %>%
+            dplyr::group_by(subject, replicate, time) %>%
+            dplyr::summarise(new_infections_tmp = 1 * any(infection_event == 1), .groups = 'drop') %>%
+            dplyr::group_by(subject, replicate) %>%
+            dplyr::summarise(new_infections_true = sum(new_infections_tmp), .groups = 'drop') %>%
+            dplyr::mutate(subject = as.character(subject))
+        estimated_new_infections <- data.frame(new_infections = rowMeans(read.csv(gsub("probabilities", "infections", file_in), sep = '\t')),
+                                               subject = as.character(rownames(read.csv(gsub("probabilities", "infections", file_in), sep = '\t'))))
+        new_infection_comparison <- full_join(new_infections, estimated_new_infections, by = c("subject"))
+        total_new_infections <- rbind(total_new_infections, new_infection_comparison)
+    }
+}
+mean(total_new_infections$new_infections_true)
+
+row_num <- 15
+inputString <- paste0(unlist(c(params_df[row_num,])), collapse = '_')
+total_input <- data.frame()
+total_new_infections <- data.frame()
+for (file_in in files_in[grepl(inputString, files_in)]) {
+    if (grepl('_probabilities.tsv', file_in)) {
+        example_input <- read.csv(file_in, sep = '\t')
+        if (!'actually_present' %in% colnames(example_input)) {
+            example_input$actually_present <- example_input$present
+        }
+        
+        example_input$replicate <- as.numeric(sub(".*_(.*?)_probabilities\\.tsv$", "\\1", file_in))
+        
+        new_infections <- example_input %>%
+            dplyr::group_by(subject, replicate, time) %>%
+            dplyr::summarise(new_infections_tmp = 1 * any(infection_event == 1), .groups = 'drop') %>%
+            dplyr::group_by(subject, replicate) %>%
+            dplyr::summarise(new_infections_true = sum(new_infections_tmp), .groups = 'drop') %>%
+            dplyr::mutate(subject = as.character(subject))
+        estimated_new_infections <- data.frame(new_infections = rowMeans(read.csv(gsub("probabilities", "infections", file_in), sep = '\t')),
+                                               subject = as.character(rownames(read.csv(gsub("probabilities", "infections", file_in), sep = '\t'))))
+        new_infection_comparison <- full_join(new_infections, estimated_new_infections, by = c("subject"))
+        total_new_infections <- rbind(total_new_infections, new_infection_comparison)
+    }
+}
+mean(total_new_infections$new_infections_true)
+
+growing_df[4,]$total_new_infections_error
 
 

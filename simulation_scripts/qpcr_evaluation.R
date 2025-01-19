@@ -117,31 +117,29 @@ prepare_error <- function(row_num) {
         total_input <- data.frame()
         total_new_infections <- data.frame()
         for (file_in in files_in[grepl(inputString, files_in)]) {
-            example_input <- read.csv(file_in, sep = '\t')
-            if (!'actually_present' %in% colnames(example_input)) {
-                example_input$actually_present <- example_input$present
-            }
-
-            if ('probability_present' %in% colnames(example_input)) {
-                if (2 %in% example_input$probability_present) {
-                    example_input$probability_present <- 1 * (example_input$probability_present == 1)
+            if (grepl('_probabilities.tsv', file_in)) {
+                example_input <- read.csv(file_in, sep = '\t')
+                if (!'actually_present' %in% colnames(example_input)) {
+                    example_input$actually_present <- example_input$present
                 }
+                
+                example_input$replicate <- as.numeric(sub(".*_(.*?)_probabilities\\.tsv$", "\\1", file_in))
+                
+                new_infections <- example_input %>%
+                    dplyr::group_by(subject, replicate, time) %>%
+                    dplyr::summarise(new_infections_tmp = 1 * any(infection_event == 1), .groups = 'drop') %>%
+                    dplyr::group_by(subject, replicate) %>%
+                    dplyr::summarise(new_infections_true = sum(new_infections_tmp), .groups = 'drop') %>%
+                    dplyr::mutate(subject = as.character(subject))
+                
+                estimated_new_infections <- data.frame(new_infections = rowMeans(read.csv(gsub("probabilities", "infections", file_in), sep = '\t')),
+                                                       subject = as.character(rownames(read.csv(gsub("probabilities", "infections", file_in), sep = '\t'))))
+                
+                new_infection_comparison <- full_join(new_infections, estimated_new_infections, by = c("subject"))
+                
+                total_input <- rbind(total_input, example_input)
+                total_new_infections <- rbind(total_new_infections, new_infection_comparison)
             }
-
-            example_input$replicate <- as.numeric(gsub(".*_|\\.tsv", "", file_in))
-
-            new_infections <- example_input %>%
-                dplyr::group_by(subject, replicate, time) %>%
-                dplyr::summarise(new_infections_tmp = 1 * any(infection_event == 1)) %>%
-                dplyr::group_by(subject, replicate) %>%
-                dplyr::summarise(new_infections_true = sum(new_infections_tmp))
-
-            estimated_new_infections <- estimate_new_infections(example_input)
-
-            new_infection_comparison <- full_join(new_infections, estimated_new_infections, by = c("subject"))
-
-            total_input <- rbind(total_input, example_input)
-            total_new_infections <- rbind(total_new_infections, new_infection_comparison)
         }
 
         binned_props <- total_input %>%
@@ -254,13 +252,13 @@ if (!file.exists('evaluation_intermediates/qpcr_evaluation.RDS')) {
     # stopCluster(cl)
 
     growing_df_save <- dplyr::bind_rows(growing_df)
+    dir.create('evaluation_intermediates', showWarnings = FALSE)
     saveRDS(growing_df_save, file = 'evaluation_intermediates/qpcr_evaluation.RDS')
 } else {
     growing_df_save <- readRDS('evaluation_intermediates/qpcr_evaluation.RDS')
 }
 
 # Change here
-
 growing_df <- growing_df_save
 growing_df <- growing_df %>%
     filter(model != 'allele-specific') %>%
@@ -309,7 +307,8 @@ plot1 <- ggplot(growing_df,
     guides(fill = guide_legend(override.aes = list(shape=21))) +
     facet_wrap( ~ synthetic_type)
 
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/probability_error.png', plot1, width = 6, height = 4)
+dir.create('figures/testing', showWarnings = F, recursive = T)
+ggsave('figures/testing/probability_error.png', plot1, width = 6, height = 4)
 
 # Second plot: mean total_novelty_error vs qPCR_only with error bars
 plot2 <- ggplot(growing_df,
@@ -347,7 +346,7 @@ plot2 <- ggplot(growing_df,
     scale_shape_manual(values = c("Yes" = 21, "No" = 22)) +
     guides(fill = guide_legend(override.aes = list(shape=21))) +
     facet_wrap( ~ synthetic_type)
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/molFOI_obs_error.png', plot2, width = 6, height = 4)
+ggsave('figures/testing/molFOI_obs_error.png', plot2, width = 6, height = 4)
 
 plot3 <- ggplot(growing_df,
                 aes(x = factor(qPCR_only), y = total_novelty_molFOI_error_imputed, fill = model, shape = multiple_imputation, group = interaction(multiple_imputation, model))) +
@@ -385,7 +384,7 @@ plot3 <- ggplot(growing_df,
     guides(fill = guide_legend(override.aes = list(shape=21))) +
     facet_wrap( ~ synthetic_type)
 
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/molFOI_inf_error.png', plot3, width = 6, height = 4)
+ggsave('figures/testing/molFOI_inf_error.png', plot3, width = 6, height = 4)
 
 plot4 <- ggplot(growing_df,
                 aes(x = factor(qPCR_only), y = total_new_infections_error, fill = model, shape = multiple_imputation, group = interaction(multiple_imputation, model))) +
@@ -422,7 +421,7 @@ plot4 <- ggplot(growing_df,
     scale_shape_manual(values = c("Yes" = 21, "No" = 22)) +
     guides(fill = guide_legend(override.aes = list(shape=21))) +
     facet_wrap( ~ synthetic_type)
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/infections_error.png', plot4, width = 6, height = 4)
+ggsave('figures/testing/infections_error.png', plot4, width = 6, height = 4)
 
 
 plot5 <- ggplot(growing_df,
@@ -458,10 +457,11 @@ plot5 <- ggplot(growing_df,
     guides(fill = guide_legend(override.aes = list(shape=21))) +
     facet_wrap( ~ synthetic_type)
 
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/probability_abs_error.png', plot5, width = 6, height = 4)
+ggsave('figures/testing/probability_abs_error.png', plot5, width = 6, height = 4)
 
-
-# Combined plot for all
+#########################
+# Combined plot for all #
+#########################
 
 p1 <- ggplot(growing_df %>% filter(synthetic_type == 'Rolling presence probability'),
                 aes(x = factor(qPCR_only), y = total_weighted_probability_error, fill = model, shape = multiple_imputation, group = interaction(model, multiple_imputation))) +
@@ -671,8 +671,255 @@ p6 <- ggplot(growing_df %>% filter(synthetic_type == 'Poisson time to clearance'
     scale_y_continuous(limits = c(-3, 3), breaks = seq(-3, 3, 1)) +
     guides(fill = guide_legend(override.aes = list(shape=21)))
 
-plot_out <- patchwork::wrap_plots(p4, p5, p6, p1, p2, p3, ncol = 3, guides = 'collect', axis_titles = 'collect')
-ggsave('~/Documents/Harvard University/Rotations/Neafsey/figures/testing/all_metrics.png', plot_out, width = 10, height = 6)
+plot_out <- patchwork::wrap_plots(p1, p2, p3, p4, p5, p6, ncol = 3, guides = 'collect', axis_titles = 'collect')
+ggsave('figures/testing/all_metrics.png', plot_out, width = 10, height = 6)
+
+
+
+
+
+
+###############################
+# Combined for absolute scale #
+###############################
+
+p1 <- ggplot(growing_df %>% filter(synthetic_type == 'Rolling presence probability'),
+             aes(x = factor(qPCR_only), y = total_weighted_probability_abs_error, fill = model, shape = multiple_imputation, group = interaction(model, multiple_imputation))) +
+    geom_hline(yintercept = 0, color = 'black') +
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1) +
+    labs(
+        x = "qPCR Only Proportion",
+        y = "|Predicted probability - True probability|",
+        fill = "Model",
+        shape = "Multiple Imputation",
+        title = "Rolling presence probability"
+    ) +
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +
+    scale_shape_manual(values = c("Yes" = 21, "No" = 22)) +
+    scale_y_continuous(labels = scales::percent, breaks = seq(-0.25, 0.25, 0.05), limits = c(0, 0.25)) +
+    guides(fill = guide_legend(override.aes = list(shape=21)))
+
+p2 <- ggplot(growing_df %>% filter(synthetic_type == 'Rolling presence probability'),
+             aes(x = factor(qPCR_only), y = total_novelty_molFOI_abs_error_imputed, fill = model, shape = multiple_imputation, group = interaction(multiple_imputation, model))) +
+    geom_hline(yintercept = 0, color = 'black') +
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1) +
+    labs(
+        title = "Rolling presence probability",
+        x = "qPCR Only Proportion",
+        y = "|Predicted molFOI - True molFOI|",
+        fill = "Model",
+        shape = "Multiple Imputation"
+    ) +
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +
+    scale_shape_manual(values = c("Yes" = 21, "No" = 22)) +
+    scale_y_continuous(limits = c(0, 25), breaks = seq(0, 25, 5)) +
+    guides(fill = guide_legend(override.aes = list(shape=21)))
+
+p3 <- ggplot(growing_df %>% filter(synthetic_type == 'Rolling presence probability'),
+             aes(x = factor(qPCR_only), y = total_new_infections_abs_error, fill = model, shape = multiple_imputation, group = interaction(multiple_imputation, model))) +
+    geom_hline(yintercept = 0, color = 'black') +
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1) +
+    labs(
+        title = "Rolling presence probability",
+        x = "qPCR Only Proportion",
+        y = "|Predicted infections - True infections|",
+        fill = "Model",
+        shape = "Multiple Imputation"
+    ) +
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +
+    scale_shape_manual(values = c("Yes" = 21, "No" = 22)) +
+    scale_y_continuous(limits = c(0, 1.5), breaks = seq(0, 1.5, 0.3)) +
+    guides(fill = guide_legend(override.aes = list(shape=21)))
+
+p4 <- ggplot(growing_df %>% filter(synthetic_type == 'Poisson time to clearance'),
+             aes(x = factor(qPCR_only), y = total_weighted_probability_abs_error, fill = model, shape = multiple_imputation, group = interaction(model, multiple_imputation))) +
+    geom_hline(yintercept = 0, color = 'black') +
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1) +
+    labs(
+        x = "qPCR Only Proportion",
+        y = "|Predicted probability - True probability|",
+        fill = "Model",
+        shape = "Multiple Imputation",
+        title = "Poisson time to clearance"
+    ) +
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +
+    scale_shape_manual(values = c("Yes" = 21, "No" = 22)) +
+    scale_y_continuous(labels = scales::percent, breaks = seq(-0.25, 0.25, 0.05), limits = c(0, 0.25)) +
+    guides(fill = guide_legend(override.aes = list(shape=21)))
+
+p5 <- ggplot(growing_df %>% filter(synthetic_type == 'Poisson time to clearance'),
+             aes(x = factor(qPCR_only), y = total_novelty_molFOI_abs_error_imputed, fill = model, shape = multiple_imputation, group = interaction(multiple_imputation, model))) +
+    geom_hline(yintercept = 0, color = 'black') +
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1) +
+    labs(
+        title = "Poisson time to clearance",
+        x = "qPCR Only Proportion",
+        y = "|Predicted molFOI - True molFOI|",
+        fill = "Model",
+        shape = "Multiple Imputation"
+    ) +
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +
+    scale_shape_manual(values = c("Yes" = 21, "No" = 22)) +
+    scale_y_continuous(limits = c(0, 25), breaks = seq(0, 25, 5)) +
+    guides(fill = guide_legend(override.aes = list(shape=21)))
+
+p6 <- ggplot(growing_df %>% filter(synthetic_type == 'Poisson time to clearance'),
+             aes(x = factor(qPCR_only), y = total_new_infections_abs_error, fill = model, shape = multiple_imputation, group = interaction(multiple_imputation, model))) +
+    geom_hline(yintercept = 0, color = 'black') +
+    geom_line(aes(color = model), linewidth = 1) +
+    scale_color_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        ), guide = "none"
+    ) +
+    ggnewscale::new_scale_fill() +
+    geom_point(aes(fill = model), size = 3, alpha=1) +
+    labs(
+        title = "Poisson time to clearance",
+        x = "qPCR Only Proportion",
+        y = "|Predicted infections - True infections|",
+        fill = "Model",
+        shape = "Multiple Imputation"
+    ) +
+    theme_bw() +
+    scale_fill_manual(
+        values = c(
+            "Bayesian" = "orange",
+            "Clustering" = "maroon",
+            "Simple" = "darkblue"
+        )
+    ) +
+    scale_shape_manual(values = c("Yes" = 21, "No" = 22)) +
+    scale_y_continuous(limits = c(0, 1.5), breaks = seq(0, 1.5, 0.3)) +
+    guides(fill = guide_legend(override.aes = list(shape=21)))
+
+plot_out <- patchwork::wrap_plots(p1, p2, p3, p4, p5, p6, ncol = 3, guides = 'collect', axis_titles = 'collect')
+ggsave('figures/testing/all_metrics_abs.png', plot_out, width = 10, height = 6)
+
+
+
+
+##################
+# In-text values #
+##################
+
+growing_df_save %>%
+    filter(qPCR_only == 0) %>%
+    select(synthetic_type, model, total_weighted_probability_error)
+
+rbind(growing_df_save %>% dplyr::filter(!(multiple_imputation == TRUE & qPCR_only == 0)),
+      growing_df_save %>% dplyr::filter(multiple_imputation == FALSE, qPCR_only == 0) %>%
+          mutate(multiple_imputation = TRUE)) %>%
+    filter(qPCR_only %in% c(0, 0.5)) %>%
+    select(synthetic_type, model, qPCR_only, multiple_imputation, total_weighted_probability_error) %>%
+    group_by(synthetic_type, model, multiple_imputation) %>%
+    arrange(qPCR_only) %>%
+    summarise(diff(total_weighted_probability_error)[1])
+
+growing_df_save %>%
+    filter(qPCR_only == 0) %>%
+    select(synthetic_type, model, total_new_infections_error)
+
+growing_df_save %>%
+    filter(qPCR_only == 0) %>%
+    select(synthetic_type, model, total_new_infections_abs_error)
+
+growing_df_save %>%
+    filter(qPCR_only == 0) %>%
+    select(synthetic_type, model, total_novelty_molFOI_error_imputed)
+
+
+
+
+
+
+
+
+
+
+
 
 
 
