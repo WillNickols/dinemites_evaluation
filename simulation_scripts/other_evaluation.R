@@ -102,7 +102,7 @@ params_df <- params_df[c(names(parsed_params)[!names(parsed_params) %in% run_onl
 
 rownames(params_df) <- paste0("sim", 1:nrow(params_df))
 
-input_path <- 'other/output/'
+input_path <- 'simulation_output/other/output/'
 files_in <- list.files(input_path, full.names = TRUE)
 
 prepare_error <- function(row_num) {

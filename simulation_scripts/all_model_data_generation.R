@@ -93,7 +93,7 @@ generate_synthetic_data_bin_present <- function(simulation_type,
 
     allele_set <- 1:nalleles
     abeta <- 1
-    bbeta <- 500
+    bbeta <- 50
 
     if (gene_interaction) {
         infection_multiplier <- 5
@@ -187,12 +187,6 @@ generate_synthetic_data_bin_present <- function(simulation_type,
             }
 
             # Convert to time-specfic probability and sample
-            if (j > 1) {
-                t_gap <- time_points[j] - time_points[j - 1]
-            } else {
-                t_gap <- time_points[j]
-            }
-            adjusted_allele_probs <- 1 - exp(-t_gap * adjusted_allele_probs)
             infected_alleles <- allele_set[rbinom(nalleles, 1, adjusted_allele_probs) == 1]
             n_new_infections <- length(infected_alleles)
 
@@ -373,7 +367,7 @@ generate_synthetic_data_pois_time <- function(simulation_type,
 
     allele_set <- 1:nalleles
     abeta <- 1
-    bbeta <- 500
+    bbeta <- 50
 
     loci_corresponding <- rep(1:loci, each = nalleles / loci)
 
@@ -464,13 +458,6 @@ generate_synthetic_data_pois_time <- function(simulation_type,
                 adjusted_allele_probs <- rep(0, length(adjusted_allele_probs))
             }
             
-            if (j > 1) {
-                t_gap <- time_points[j] - time_points[j - 1]
-            } else {
-                t_gap <- time_points[j]
-            }
-            adjusted_allele_probs <- 1 - exp(-t_gap * adjusted_allele_probs)
-
             key_locus <- sample(1:loci, 1)
             infected_alleles <- allele_set[rbinom(nalleles, 1, adjusted_allele_probs) == 1 & loci_corresponding == key_locus]
             n_new_infections <- length(infected_alleles)

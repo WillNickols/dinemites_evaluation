@@ -32,15 +32,15 @@ Rscript real_data_analysis_scripts/uganda_analysis.R
 The synthetic data analysis can be run with:
 ```
 python simulation_scripts/all_model_testing.py \
-  -o dinemites_evaluation/qpcr/  \
+  -o dinemites_evaluation/simulation_output/qpcr/  \
   --evaluation qpcr
   
 python simulation_scripts/all_model_testing.py \
-  -o dinemites_evaluation/other/  \
+  -o dinemites_evaluation/simulation_output/other/  \
   --evaluation other
   
 python simulation_scripts/all_model_testing.py \
-  -o dinemites_evaluation/locus/  \
+  -o dinemites_evaluation/simulation_output/locus/  \
   --evaluation locus
 ```
 
@@ -48,7 +48,7 @@ More `--local-jobs` or `--grid-jobs` can be specified if multiple CPUs
 or cores are available:
 ```
 python simulation_scripts/all_model_testing.py \
-  -o dinemites_evaluation/qpcr/  \
+  -o dinemites_evaluation/simulation_output/qpcr/  \
   --evaluation qpcr --grid-jobs 2000 --cores 1 --time 180 --mem 40000 \
   --grid-partition PARTITION_NAME
 ```
