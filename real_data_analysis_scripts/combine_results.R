@@ -383,13 +383,13 @@ for (i in 1:length(dataset_names)) {
 plot_out <- patchwork::wrap_plots(plot_list[[1]], plot_list[[2]], plot_list[[3]], ncol = 3, guides = 'collect', axis_titles = 'collect')
 ggplot2::ggsave('figures/general/sequencing_comparison.png', plot = plot_out, height = 3.5, width = 10, dpi = 1000)
 
-(1.92-0.920)/0.920
+(1.95-0.920)/0.920
 
-(1.64-0.920)/0.920
+(1.70-0.920)/0.920
 
 (3.45 - 0.751) / 0.751
 
-(3.23 - 0.754) / 0.754
+(3.22 - 0.754) / 0.754
 
 (0.774 - 0.583) / 0.583
 
